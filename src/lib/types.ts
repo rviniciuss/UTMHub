@@ -28,6 +28,18 @@ export interface GeneratedUTM {
   utm: string;
 }
 
+/** A single UTM entry imported from a pasted list, stored persistently. */
+export interface UTMEntry {
+  id: string;
+  utm: string;          // full UTM string, e.g. "ARM-Namoro2-FB"
+  countryCode: string;  // e.g. "ARM"
+  countryName: string;  // resolved display name, e.g. "Árabe - Mundo"
+  parameter: string;    // e.g. "Namoro2"
+  platform: string;     // e.g. "FB"
+  active: boolean;
+  createdAt: string;
+}
+
 export interface Campaign {
   id: string;
   campaign_name: string;
