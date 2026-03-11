@@ -1,5 +1,32 @@
 export type Platform = 'Meta Ads' | 'Google Adsense' | 'Both';
 export type Status = 'Active' | 'Testing' | 'Paused';
+export type UTMPlatform = 'FB' | 'TT' | 'GG' | 'Native';
+
+export const UTM_PLATFORMS: UTMPlatform[] = ['FB', 'TT', 'GG', 'Native'];
+
+export interface CountryGroup {
+  id: string;
+  name: string;
+  codes: string[];
+}
+
+export interface ParsedCampaign {
+  cartaz: number;
+  groupName: string;
+  parameter: string;
+  platform: string;
+  rawLine: string;
+  error?: string;
+}
+
+export interface GeneratedUTM {
+  cartaz: number;
+  groupName: string;
+  countryCode: string;
+  parameter: string;
+  platform: string;
+  utm: string;
+}
 
 export interface Campaign {
   id: string;

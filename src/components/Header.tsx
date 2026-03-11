@@ -1,9 +1,11 @@
 'use client';
 
-import { Sun, Moon, Bell, Plus } from 'lucide-react';
+import { Sun, Moon, Plus } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { useState } from 'react';
 import { AddCampaignModal } from './AddCampaignModal';
+import { LanguageToggle } from './LanguageToggle';
+import { useLanguage } from '@/context/LanguageContext';
 
 interface HeaderProps {
   title: string;
@@ -12,6 +14,7 @@ interface HeaderProps {
 
 export function Header({ title, subtitle }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
+  const { t } = useLanguage();
   const [showAdd, setShowAdd] = useState(false);
 
   return (
@@ -25,19 +28,16 @@ export function Header({ title, subtitle }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Language toggle */}
+          <LanguageToggle />
+
           {/* Add UTM button */}
           <button
             onClick={() => setShowAdd(true)}
             className="flex items-center gap-2 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium rounded-lg transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
-            Add New UTM
-          </button>
-
-          {/* Notifications */}
-          <button className="relative w-8 h-8 rounded-lg border border-[var(--border)] flex items-center justify-center hover:bg-[var(--muted)] transition-colors">
-            <Bell className="w-4 h-4 text-[var(--muted-foreground)]" />
-            <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-violet-500" />
+            {t('Add New UTM')}
           </button>
 
           {/* Theme toggle */}

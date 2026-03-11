@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { CampaignProvider } from "@/context/CampaignContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { LanguageProvider } from "@/context/LanguageContext";
 
 export const metadata: Metadata = {
   title: "UTM Hub — Campaign Manager",
-  description: "Organize and track your campaign parameters across countries and niches.",
+  description: "Organize e rastreie parâmetros de campanha por países e nichos.",
   keywords: ["UTM", "campaign manager", "digital marketing", "tracking"],
 };
 
@@ -15,12 +16,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="pt" suppressHydrationWarning>
       <body className="antialiased">
         <ThemeProvider>
-          <CampaignProvider>
-            {children}
-          </CampaignProvider>
+          <LanguageProvider>
+            <CampaignProvider>
+              {children}
+            </CampaignProvider>
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

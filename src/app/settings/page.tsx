@@ -1,25 +1,194 @@
 'use client';
 
-import { useState } from 'react';
-import { Settings, Database, Palette, Download, Upload, Trash2, CheckCircle, Info } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Settings, Database, Palette, Download, Upload, Trash2, CheckCircle, Info,
+  Plus, Pencil, X, Globe, RotateCcw,
+} from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
 import { useCampaigns } from '@/context/CampaignContext';
+import { useLanguage } from '@/context/LanguageContext';
 import { exportToCSV } from '@/lib/utils';
 import { Campaign } from '@/lib/types';
+import { CountryGroup } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { getGroups, saveGroups, addGroup, updateGroup, deleteGroup, resetGroups, DEFAULT_GROUPS } from '@/lib/groups';
 
+// ────────────────────────────────────────────────
+// Group editor row
+// ────────────────────────────────────────────────
+interface GroupRowProps {
+  group: CountryGroup;
+  onEdit: (g: CountryGroup) => void;
+  onDelete: (id: string) => void;
+  t: (k: string) => string;
+}
+
+function GroupRow({ group, onEdit, onDelete, t }: GroupRowProps) {
+  return (
+    <div className="flex items-center gap-3 p-3 bg-[var(--muted)] rounded-lg group">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-[var(--foreground)] truncate">{group.name}</p>
+        <div className="flex flex-wrap gap-1 mt-1">
+          {group.codes.length === 0 ? (
+            <span className="text-[10px] text-[var(--muted-foreground)] italic">{t('No codes')}</span>
+          ) : (
+            group.codes.map(code => (
+              <span key={code} className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 font-mono font-medium">
+                {code}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <button
+          onClick={() => onEdit(group)}
+          className="w-7 h-7 rounded flex items-center justify-center hover:bg-violet-500/15 text-[var(--muted-foreground)] hover:text-violet-400 transition-colors"
+          title={t('Edit Group')}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => onDelete(group.id)}
+          className="w-7 h-7 rounded flex items-center justify-center hover:bg-red-500/15 text-[var(--muted-foreground)] hover:text-red-400 transition-colors"
+          title={t('Delete Group')}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────
+// Group form (add / edit)
+// ────────────────────────────────────────────────
+interface GroupFormProps {
+  initial?: CountryGroup;
+  onSave: (name: string, codes: string[]) => void;
+  onCancel: () => void;
+  t: (k: string) => string;
+}
+
+function GroupForm({ initial, onSave, onCancel, t }: GroupFormProps) {
+  const [name, setName] = useState(initial?.name ?? '');
+  const [codesText, setCodesText] = useState(initial?.codes.join(', ') ?? '');
+
+  const handleSave = () => {
+    const n = name.trim().toUpperCase();
+    if (!n) return;
+    const codes = codesText
+      .split(/[\s,]+/)
+      .map(c => c.trim().toUpperCase())
+      .filter(Boolean);
+    onSave(n, codes);
+  };
+
+  return (
+    <div className="p-3 bg-[var(--muted)] border border-violet-500/30 rounded-lg space-y-2.5 animate-fade-in">
+      <div>
+        <label className="block text-xs font-medium text-[var(--foreground)] mb-1">{t('Group Name')}</label>
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value.toUpperCase())}
+          placeholder="ARABE-MUNDO"
+          className="w-full px-3 py-2 text-sm font-mono bg-[var(--card)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[var(--foreground)] mb-1">{t('Country Codes')}</label>
+        <input
+          type="text"
+          value={codesText}
+          onChange={e => setCodesText(e.target.value.toUpperCase())}
+          placeholder="ARM, AREU, ARIS, ARKU, AROM"
+          className="w-full px-3 py-2 text-sm font-mono bg-[var(--card)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
+        />
+        <p className="text-[10px] text-[var(--muted-foreground)] mt-1">{t('Country codes separated by commas')}</p>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          disabled={!name.trim()}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+            name.trim()
+              ? 'bg-violet-600 hover:bg-violet-500 text-white'
+              : 'bg-[var(--border)] text-[var(--muted-foreground)] cursor-not-allowed'
+          )}
+        >
+          <CheckCircle className="w-3.5 h-3.5" />
+          {t('Save')}
+        </button>
+        <button
+          onClick={onCancel}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)] transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+          {t('Cancel')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────
+// Main Settings page
+// ────────────────────────────────────────────────
 export default function SettingsPage() {
   const { campaigns, refresh } = useCampaigns();
+  const { t } = useLanguage();
   const [saved, setSaved] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
 
-  const handleExport = () => {
-    exportToCSV(campaigns);
+  // Groups state
+  const [groups, setGroups] = useState<CountryGroup[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<CountryGroup | null>(null);
+  const [groupSearch, setGroupSearch] = useState('');
+
+  useEffect(() => {
+    setGroups(getGroups());
+  }, []);
+
+  const refreshGroups = useCallback(() => {
+    setGroups(getGroups());
+  }, []);
+
+  // ── Group handlers ──────────────────────────────
+  const handleAddGroup = (name: string, codes: string[]) => {
+    addGroup(name, codes);
+    refreshGroups();
+    setShowAddForm(false);
   };
 
+  const handleUpdateGroup = (name: string, codes: string[]) => {
+    if (!editingGroup) return;
+    updateGroup(editingGroup.id, name, codes);
+    refreshGroups();
+    setEditingGroup(null);
+  };
+
+  const handleDeleteGroup = (id: string) => {
+    if (!confirm('Excluir este grupo?')) return;
+    deleteGroup(id);
+    refreshGroups();
+  };
+
+  const handleResetGroups = () => {
+    if (!confirm('Restaurar todos os grupos para o padrão? Suas alterações serão perdidas.')) return;
+    resetGroups();
+    refreshGroups();
+  };
+
+  // ── Campaign handlers ───────────────────────────
+  const handleExport = () => exportToCSV(campaigns);
+
   const handleClearAll = () => {
-    if (confirm('Are you sure you want to delete ALL campaigns? This cannot be undone.')) {
+    if (confirm('Tem certeza que deseja deletar TODAS as campanhas? Esta ação não pode ser desfeita.')) {
       localStorage.removeItem('utm_hub_campaigns');
       refresh();
     }
@@ -45,7 +214,6 @@ export default function SettingsPage() {
         })),
         ...existing,
       ];
-      // Deduplicate by UTM
       const seen = new Set<string>();
       const deduped = merged.filter((c: { utm_parameter?: string }) => {
         const utm = c.utm_parameter || '';
@@ -63,26 +231,116 @@ export default function SettingsPage() {
     }
   };
 
+  const filteredGroups = groupSearch
+    ? groups.filter(g => g.name.toLowerCase().includes(groupSearch.toLowerCase()) ||
+        g.codes.some(c => c.toLowerCase().includes(groupSearch.toLowerCase())))
+    : groups;
+
   return (
-    <AppShell title="Settings" subtitle="Manage your UTM Hub preferences and data">
+    <AppShell title={t('Settings')} subtitle="Gerencie grupos de países e preferências do UTM Hub">
       <div className="p-6 max-w-3xl space-y-6">
-        {/* Data Management */}
+
+        {/* ── Country Groups ─────────────────────────── */}
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+              <Globe className="w-4 h-4 text-violet-400" />
+              {t('Country Groups')}
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleResetGroups}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)] transition-colors"
+                title={t('Reset to defaults')}
+              >
+                <RotateCcw className="w-3 h-3" />
+                {t('Reset to defaults')}
+              </button>
+              <button
+                onClick={() => { setShowAddForm(true); setEditingGroup(null); }}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+              >
+                <Plus className="w-3 h-3" />
+                {t('Add Group')}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)] mb-4">
+            Configure os grupos e seus códigos de país. O gerador usará apenas esses códigos.
+          </p>
+
+          {/* Search */}
+          <input
+            type="text"
+            value={groupSearch}
+            onChange={e => setGroupSearch(e.target.value)}
+            placeholder="Buscar grupo ou código..."
+            className="w-full px-3 py-2 text-sm bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
+          />
+
+          {/* Add form */}
+          {showAddForm && !editingGroup && (
+            <div className="mb-3">
+              <GroupForm
+                onSave={handleAddGroup}
+                onCancel={() => setShowAddForm(false)}
+                t={t}
+              />
+            </div>
+          )}
+
+          {/* Group list */}
+          <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
+            {filteredGroups.length === 0 ? (
+              <p className="text-xs text-[var(--muted-foreground)] text-center py-6">
+                Nenhum grupo encontrado.
+              </p>
+            ) : (
+              filteredGroups.map(group => (
+                editingGroup?.id === group.id ? (
+                  <div key={group.id} className="mb-1">
+                    <GroupForm
+                      initial={group}
+                      onSave={handleUpdateGroup}
+                      onCancel={() => setEditingGroup(null)}
+                      t={t}
+                    />
+                  </div>
+                ) : (
+                  <GroupRow
+                    key={group.id}
+                    group={group}
+                    onEdit={setEditingGroup}
+                    onDelete={handleDeleteGroup}
+                    t={t}
+                  />
+                )
+              ))
+            )}
+          </div>
+
+          <p className="text-[10px] text-[var(--muted-foreground)] mt-3">
+            {groups.length} grupos · {groups.reduce((sum, g) => sum + g.codes.length, 0)} códigos no total
+          </p>
+        </div>
+
+        {/* ── Data Management ────────────────────────── */}
         <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
           <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1 flex items-center gap-2">
             <Database className="w-4 h-4 text-violet-400" />
-            Data Management
+            {t('Data Management')}
           </h3>
           <p className="text-xs text-[var(--muted-foreground)] mb-4">
-            Export, import, or clear your campaign data.
+            Exporte, importe ou limpe os dados de campanha.
           </p>
 
           <div className="space-y-3">
             {/* Export */}
             <div className="flex items-center justify-between p-3 bg-[var(--muted)] rounded-lg">
               <div>
-                <p className="text-sm font-medium text-[var(--foreground)]">Export Campaigns</p>
+                <p className="text-sm font-medium text-[var(--foreground)]">{t('Export Campaigns')}</p>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Download all {campaigns.length} campaigns as CSV
+                  Baixar {campaigns.length} campanhas como CSV
                 </p>
               </div>
               <button
@@ -90,32 +348,30 @@ export default function SettingsPage() {
                 className="flex items-center gap-2 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium rounded-lg transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
-                Export CSV
+                {t('Export CSV')}
               </button>
             </div>
 
             {/* Import */}
             <div className="p-3 bg-[var(--muted)] rounded-lg space-y-2">
               <div>
-                <p className="text-sm font-medium text-[var(--foreground)]">Bulk Import (JSON)</p>
+                <p className="text-sm font-medium text-[var(--foreground)]">{t('Bulk Import (JSON)')}</p>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Paste a JSON array of campaign objects to bulk import
+                  Cole um array JSON de campanhas para importar em massa
                 </p>
               </div>
               <textarea
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
-                placeholder={`[{"campaign_name": "...", "niche": "Finance", "country": "Brazil", "utm_parameter": "utmsourceXBRFIN", "platform": "Meta Ads", "status": "Active"}]`}
+                placeholder={`[{"campaign_name": "...", "niche": "Finance", "country": "Brazil", "utm_parameter": "ARM-Namoro2-FB", "platform": "Meta Ads", "status": "Active"}]`}
                 rows={4}
                 className="w-full px-3 py-2 text-xs font-mono bg-[var(--card)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500 resize-none"
               />
-              {importError && (
-                <p className="text-xs text-red-400">{importError}</p>
-              )}
+              {importError && <p className="text-xs text-red-400">{importError}</p>}
               {saved && (
                 <p className="flex items-center gap-1.5 text-xs text-emerald-400">
                   <CheckCircle className="w-3.5 h-3.5" />
-                  Campaigns imported successfully!
+                  Campanhas importadas com sucesso!
                 </p>
               )}
               <button
@@ -129,16 +385,16 @@ export default function SettingsPage() {
                 )}
               >
                 <Upload className="w-3.5 h-3.5" />
-                Import JSON
+                {t('Import JSON')}
               </button>
             </div>
 
             {/* Clear all */}
             <div className="flex items-center justify-between p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
               <div>
-                <p className="text-sm font-medium text-red-400">Clear All Data</p>
+                <p className="text-sm font-medium text-red-400">{t('Clear All Data')}</p>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Permanently delete all campaign data from local storage
+                  Deletar permanentemente todos os dados de campanha
                 </p>
               </div>
               <button
@@ -146,44 +402,46 @@ export default function SettingsPage() {
                 className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-medium rounded-lg border border-red-500/30 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                Clear All
+                {t('Clear')}
               </button>
             </div>
           </div>
         </div>
 
-        {/* Appearance */}
+        {/* ── Appearance ─────────────────────────────── */}
         <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
           <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1 flex items-center gap-2">
             <Palette className="w-4 h-4 text-violet-400" />
-            Appearance
+            {t('Appearance')}
           </h3>
-          <p className="text-xs text-[var(--muted-foreground)] mb-4">
-            Customize the look and feel of UTM Hub.
+          <p className="text-xs text-[var(--muted-foreground)] mb-3">
+            Personalize a aparência do UTM Hub.
           </p>
-          <div className="p-3 bg-[var(--muted)] rounded-lg">
+          <div className="p-3 bg-[var(--muted)] rounded-lg space-y-2">
             <p className="text-xs text-[var(--muted-foreground)]">
-              Use the sun/moon icon in the top-right header to toggle between dark and light mode.
-              Your preference is saved automatically.
+              Use o ícone sol/lua no cabeçalho para alternar entre modo claro e escuro.
+            </p>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Use os botões <strong className="text-[var(--foreground)]">PT / EN</strong> no cabeçalho para alternar o idioma.
             </p>
           </div>
         </div>
 
-        {/* Integrations */}
+        {/* ── Integrations ───────────────────────────── */}
         <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
           <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1 flex items-center gap-2">
             <Settings className="w-4 h-4 text-violet-400" />
-            Integrations
+            {t('Integrations')}
           </h3>
           <p className="text-xs text-[var(--muted-foreground)] mb-4">
-            Connect to external services for enhanced features.
+            Conecte serviços externos para funcionalidades avançadas.
           </p>
           <div className="space-y-2">
             {[
-              { name: 'Supabase Database', desc: 'Sync campaigns to PostgreSQL cloud database', status: 'Configure in .env.local', icon: Database },
-              { name: 'Meta Ads API', desc: 'Pull live campaign metrics automatically', status: 'Coming soon', icon: Info },
-              { name: 'Google Ads API', desc: 'Sync Google Adsense campaign data', status: 'Coming soon', icon: Info },
-              { name: 'Google Analytics', desc: 'Track UTM performance metrics', status: 'Coming soon', icon: Info },
+              { name: 'Supabase Database', desc: 'Sincronize campanhas com banco PostgreSQL na nuvem', status: 'Configurar em .env.local', icon: Database },
+              { name: 'Meta Ads API', desc: 'Puxar métricas de campanha automaticamente', status: 'Em breve', icon: Info },
+              { name: 'Google Ads API', desc: 'Sincronizar dados de campanha Google', status: 'Em breve', icon: Info },
+              { name: 'Google Analytics', desc: 'Rastrear métricas de performance UTM', status: 'Em breve', icon: Info },
             ].map(({ name, desc, status, icon: Icon }) => (
               <div key={name} className="flex items-center gap-3 p-3 bg-[var(--muted)] rounded-lg">
                 <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
@@ -201,47 +459,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Database Schema */}
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1 flex items-center gap-2">
-            <Database className="w-4 h-4 text-violet-400" />
-            Supabase Setup
-          </h3>
-          <p className="text-xs text-[var(--muted-foreground)] mb-3">
-            Run this SQL in your Supabase project to enable cloud sync.
-          </p>
-          <pre className="text-xs font-mono bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 overflow-x-auto text-[var(--foreground)] leading-relaxed">
-{`CREATE TABLE campaigns (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  campaign_name TEXT NOT NULL,
-  niche TEXT NOT NULL,
-  country TEXT NOT NULL,
-  utm_parameter TEXT UNIQUE NOT NULL,
-  platform TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_campaigns_utm
-  ON campaigns(utm_parameter);
-CREATE INDEX idx_campaigns_country
-  ON campaigns(country);
-CREATE INDEX idx_campaigns_niche
-  ON campaigns(niche);
-
-ALTER TABLE campaigns
-  ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all" ON campaigns
-  FOR ALL USING (true);`}
-          </pre>
-          <p className="text-xs text-[var(--muted-foreground)] mt-3">
-            Then add your keys to <code className="bg-[var(--muted)] px-1 rounded">.env.local</code>:
-          </p>
-          <pre className="text-xs font-mono bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 mt-2 text-violet-400">
-{`NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key`}
-          </pre>
-        </div>
       </div>
     </AppShell>
   );

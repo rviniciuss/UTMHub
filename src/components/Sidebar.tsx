@@ -14,18 +14,20 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { useLanguage } from '@/context/LanguageContext';
 
-const navItems = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/generator', label: 'UTM Generator', icon: Zap },
-  { href: '/countries', label: 'Countries', icon: Globe },
-  { href: '/niches', label: 'Niches', icon: Tag },
-  { href: '/settings', label: 'Settings', icon: Settings },
+const navKeys = [
+  { href: '/', labelKey: 'Dashboard', icon: LayoutDashboard },
+  { href: '/generator', labelKey: 'UTM Generator', icon: Zap },
+  { href: '/countries', labelKey: 'Countries', icon: Globe },
+  { href: '/niches', labelKey: 'Niches', icon: Tag },
+  { href: '/settings', labelKey: 'Settings', icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { t } = useLanguage();
 
   return (
     <aside
@@ -53,8 +55,9 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navKeys.map(({ href, labelKey, icon: Icon }) => {
           const active = pathname === href;
+          const label = t(labelKey);
           return (
             <Link
               key={href}
@@ -84,9 +87,9 @@ export function Sidebar() {
       {!collapsed && (
         <div className="p-3 border-t border-[var(--border)] animate-fade-in">
           <div className="rounded-lg bg-violet-600/10 border border-violet-600/20 p-3">
-            <p className="text-[11px] text-violet-400 font-medium mb-0.5">Pro Tip</p>
+            <p className="text-[11px] text-violet-400 font-medium mb-0.5">{t('Pro Tip')}</p>
             <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed">
-              Use the UTM Generator for instant parameter creation.
+              {t('Use the UTM Generator for instant parameter creation.')}
             </p>
           </div>
         </div>

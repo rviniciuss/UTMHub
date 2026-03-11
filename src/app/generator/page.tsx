@@ -1,304 +1,523 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Zap, Copy, Check, AlertTriangle, CheckCircle, Plus, RefreshCw, Info } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import {
+  Zap, Copy, Check, Download, Trash2, AlertTriangle, Info, FileText, ChevronDown, ChevronUp,
+} from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
-import { useCampaigns } from '@/context/CampaignContext';
-import { NICHES, COUNTRIES } from '@/lib/types';
-import { generateUTM, copyToClipboard, cn } from '@/lib/utils';
-import { AddCampaignModal } from '@/components/AddCampaignModal';
-import { Campaign } from '@/lib/types';
+import { useLanguage } from '@/context/LanguageContext';
+import { getGroupByName, getGroups } from '@/lib/groups';
+import { ParsedCampaign, GeneratedUTM } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
-const FORMAT_PRESETS = [
-  { label: 'Default', format: 'utmsourceX{COUNTRY}{NICHE}{BTN}', example: 'utmsourceXBRFINBTN' },
-  { label: 'Short', format: '{COUNTRY}{NICHE}{BTN}', example: 'BRFINBTN' },
-  { label: 'Detailed', format: 'utm_{COUNTRY}_{NICHE}_{BTN}', example: 'utm_BR_FIN_BTN' },
-  { label: 'Custom', format: '', example: 'Custom format' },
-];
+// ────────────────────────────────────────────────
+// Parser
+// ────────────────────────────────────────────────
+const PLATFORM_PATTERN = /-(FB|TT|GG|Native)\b/i;
 
-export default function GeneratorPage() {
-  const { checkDuplicate } = useCampaigns();
-  const [niche, setNiche] = useState('');
-  const [country, setCountry] = useState('');
-  const [button, setButton] = useState('BTN');
-  const [customFormat, setCustomFormat] = useState('');
-  const [selectedPreset, setSelectedPreset] = useState(0);
-  const [generated, setGenerated] = useState('');
-  const [isDuplicate, setIsDuplicate] = useState<boolean | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [prefillCampaign, setPrefillCampaign] = useState<Partial<Campaign> | null>(null);
+function parseLine(line: string): ParsedCampaign | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
 
-  const activeFormat = selectedPreset === 3 ? customFormat : FORMAT_PRESETS[selectedPreset].format;
+  // Extract cartaz number
+  const cartazMatch = trimmed.match(/Cartaz\s+(\d+)/i);
+  const cartaz = cartazMatch ? parseInt(cartazMatch[1], 10) : 0;
 
-  const generate = () => {
-    if (!niche || !country || !button) return;
-    const countryObj = COUNTRIES.find(c => c.name === country);
-    const utm = generateUTM(niche, countryObj?.code || country, button, activeFormat || undefined);
-    setGenerated(utm);
-    setHistory(prev => [utm, ...prev.filter(h => h !== utm)].slice(0, 10));
-    const dup = checkDuplicate(utm);
-    setIsDuplicate(dup);
-  };
+  // Extract group name from [GROUP-NAME]
+  const groupMatch = trimmed.match(/\[([^\]]+)\]/);
+  const groupName = groupMatch ? groupMatch[1].trim().toUpperCase() : '';
 
-  useEffect(() => {
-    if (niche && country && button) {
-      generate();
+  // Extract platform (FB, TT, GG, Native) - case insensitive
+  const platformMatch = trimmed.match(PLATFORM_PATTERN);
+  const platform = platformMatch ? platformMatch[1].toUpperCase() : '';
+
+  // Extract parameter: pattern is CODE-PARAMETER-PLATFORM
+  // We take whatever is between a hyphen-delimited code and the platform
+  // e.g. "ARM-Namoro2-FB" → parameter = Namoro2
+  let parameter = '';
+  const platformRaw = platformMatch ? platformMatch[1] : '';
+  // Match: word-PARAMETER-PLATFORM
+  const paramRegex = new RegExp(`([A-Za-z0-9]+)-${platformRaw}\\b`, 'i');
+  const paramMatch = trimmed.match(paramRegex);
+  if (paramMatch) {
+    parameter = paramMatch[1];
+  }
+
+  if (!groupName || !parameter || !platform) return null;
+
+  return { cartaz, groupName, parameter, platform: platform.toUpperCase(), rawLine: line };
+}
+
+function parseCampaignText(text: string): ParsedCampaign[] {
+  const lines = text.split('\n');
+  const results: ParsedCampaign[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const parsed = parseLine(line);
+    if (parsed) {
+      results.push(parsed);
+    } else {
+      // Return error entry so user knows which line failed
+      results.push({
+        cartaz: 0,
+        groupName: '',
+        parameter: '',
+        platform: '',
+        rawLine: line,
+        error: line,
+      });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [niche, country, button, selectedPreset, customFormat]);
+  }
+  return results;
+}
 
-  const handleCopy = async () => {
-    if (!generated) return;
-    await copyToClipboard(generated);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+// ────────────────────────────────────────────────
+// UTM generation
+// ────────────────────────────────────────────────
+function generateUTMs(parsed: ParsedCampaign[]): GeneratedUTM[] {
+  const results: GeneratedUTM[] = [];
+  for (const campaign of parsed) {
+    if (campaign.error || !campaign.groupName) continue;
+    const group = getGroupByName(campaign.groupName);
+    if (!group || group.codes.length === 0) continue;
+    for (const code of group.codes) {
+      results.push({
+        cartaz: campaign.cartaz,
+        groupName: campaign.groupName,
+        countryCode: code,
+        parameter: campaign.parameter,
+        platform: campaign.platform,
+        utm: `${code}-${campaign.parameter}-${campaign.platform}`,
+      });
+    }
+  }
+  return results;
+}
+
+// ────────────────────────────────────────────────
+// CSV export
+// ────────────────────────────────────────────────
+function exportUTMsToCSV(utms: GeneratedUTM[]) {
+  const header = 'Cartaz,Group,Country Code,Parameter,Platform,UTM\n';
+  const rows = utms
+    .map(u => `${u.cartaz},"${u.groupName}",${u.countryCode},${u.parameter},${u.platform},${u.utm}`)
+    .join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `utm_export_${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ────────────────────────────────────────────────
+// Component
+// ────────────────────────────────────────────────
+export default function GeneratorPage() {
+  const { t } = useLanguage();
+
+  const [inputText, setInputText] = useState('');
+  const [parsed, setParsed] = useState<ParsedCampaign[]>([]);
+  const [generated, setGenerated] = useState<GeneratedUTM[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [showParsed, setShowParsed] = useState(false);
+
+  const handleExtract = useCallback(() => {
+    const results = parseCampaignText(inputText);
+    setParsed(results);
+    setGenerated([]);
+    setShowParsed(true);
+  }, [inputText]);
+
+  const handleGenerate = useCallback(() => {
+    const utms = generateUTMs(parsed);
+    setGenerated(utms);
+  }, [parsed]);
+
+  const handleCopyUTM = async (utm: string, index: number) => {
+    await navigator.clipboard.writeText(utm);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 1500);
   };
 
-  const handleSave = () => {
-    if (!generated || isDuplicate) return;
-    setPrefillCampaign({
-      utm_parameter: generated,
-      niche,
-      country,
-    });
-    setShowAddModal(true);
+  const handleCopyAll = async () => {
+    const text = generated.map(u => u.utm).join('\n');
+    await navigator.clipboard.writeText(text);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
   };
 
-  const isReady = niche && country && button;
+  const handleClear = () => {
+    setInputText('');
+    setParsed([]);
+    setGenerated([]);
+    setShowParsed(false);
+  };
+
+  // Detect groups that exist but have no codes
+  const groupWarnings = parsed
+    .filter(p => !p.error && p.groupName)
+    .reduce<{ groupName: string; warning: string }[]>((acc, p) => {
+      if (acc.find(w => w.groupName === p.groupName)) return acc;
+      const group = getGroupByName(p.groupName);
+      if (!group) acc.push({ groupName: p.groupName, warning: 'not_found' });
+      else if (group.codes.length === 0) acc.push({ groupName: p.groupName, warning: 'empty' });
+      return acc;
+    }, []);
+
+  const validParsed = parsed.filter(p => !p.error && p.groupName);
+  const errorParsed = parsed.filter(p => !!p.error);
+  const groups = getGroups();
 
   return (
-    <AppShell title="UTM Generator" subtitle="Generate smart UTM parameters automatically">
-      <div className="p-6 max-w-4xl">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-          {/* Generator Form */}
-          <div className="lg:col-span-3 space-y-5">
-            {/* Format presets */}
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-[var(--foreground)] mb-3 flex items-center gap-2">
-                <Zap className="w-4 h-4 text-violet-400" />
-                UTM Format
-              </h3>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {FORMAT_PRESETS.map((preset, i) => (
-                  <button
-                    key={preset.label}
-                    onClick={() => setSelectedPreset(i)}
-                    className={cn(
-                      'flex flex-col items-start p-3 rounded-lg border text-left transition-all',
-                      selectedPreset === i
-                        ? 'border-violet-500/50 bg-violet-500/10'
-                        : 'border-[var(--border)] hover:bg-[var(--muted)]'
-                    )}
-                  >
-                    <span className={cn('text-xs font-semibold', selectedPreset === i ? 'text-violet-400' : 'text-[var(--foreground)]')}>
-                      {preset.label}
-                    </span>
-                    <span className="text-[10px] text-[var(--muted-foreground)] mt-0.5 font-mono truncate w-full">
-                      {preset.format || 'Your custom format'}
-                    </span>
-                  </button>
-                ))}
-              </div>
+    <AppShell
+      title={t('UTM Generator')}
+      subtitle={t('Paste Campaign Text')}
+    >
+      <div className="p-6 max-w-6xl space-y-6">
 
-              {selectedPreset === 3 && (
-                <div className="space-y-2 animate-fade-in">
-                  <label className="text-xs text-[var(--muted-foreground)]">
-                    Custom format using {'{COUNTRY}'}, {'{NICHE}'}, {'{BTN}'}
-                  </label>
-                  <input
-                    type="text"
-                    value={customFormat}
-                    onChange={(e) => setCustomFormat(e.target.value)}
-                    placeholder="e.g. {COUNTRY}_{NICHE}_{BTN}"
-                    className="w-full px-3 py-2 text-sm font-mono bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
-                  />
-                </div>
+        {/* ── Input Section ─────────────────────────────── */}
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-violet-400" />
+            {t('Paste Campaign Text')}
+          </h3>
+          <p className="text-xs text-[var(--muted-foreground)] mb-3">
+            {t('Paste one campaign per line. Format: Cartaz N [GROUP] ... CODE-Parameter-Platform')}
+          </p>
+
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder={`Cartaz 4 [ARABE-MUNDO] ESTÁ ATRELADO AO ARM-Namoro2-FB\nCartaz 5 [ARABE-EUROPA] ESTÁ ATRELADO AO AREU-Finance2-FB`}
+            rows={6}
+            className="w-full px-3 py-2.5 text-sm font-mono bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500 resize-y"
+          />
+
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <button
+              onClick={handleExtract}
+              disabled={!inputText.trim()}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                inputText.trim()
+                  ? 'bg-violet-600 hover:bg-violet-500 text-white'
+                  : 'bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed'
               )}
-            </div>
+            >
+              <Zap className="w-4 h-4" />
+              {t('Extract Campaigns')}
+            </button>
 
-            {/* Inputs */}
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-[var(--foreground)] mb-1">Campaign Parameters</h3>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
-                  Niche <span className="text-red-400">*</span>
-                </label>
-                <select
-                  value={niche}
-                  onChange={(e) => setNiche(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
-                >
-                  <option value="">Select niche</option>
-                  {NICHES.map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
-                  Country <span className="text-red-400">*</span>
-                </label>
-                <select
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
-                >
-                  <option value="">Select country</option>
-                  {COUNTRIES.map((c) => <option key={c.code} value={c.name}>{c.flag} {c.name}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
-                  Button / Placement Code
-                </label>
-                <input
-                  type="text"
-                  value={button}
-                  onChange={(e) => setButton(e.target.value.toUpperCase())}
-                  placeholder="BTN, HERO, FOOTER, etc."
-                  className="w-full px-3 py-2 text-sm font-mono bg-[var(--muted)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
-              </div>
-
+            {validParsed.length > 0 && (
               <button
-                onClick={generate}
-                disabled={!isReady}
+                onClick={handleGenerate}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+              >
+                <Zap className="w-4 h-4" />
+                {t('Generate UTMs')}
+              </button>
+            )}
+
+            {(parsed.length > 0 || inputText) && (
+              <button
+                onClick={handleClear}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-[var(--border)] text-[var(--muted-foreground)] hover:text-red-400 hover:border-red-500/30 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t('Clear')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Warnings ──────────────────────────────────── */}
+        {groupWarnings.length > 0 && (
+          <div className="space-y-2">
+            {groupWarnings.map(({ groupName, warning }) => (
+              <div
+                key={groupName}
                 className={cn(
-                  'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                  isReady
-                    ? 'bg-violet-600 hover:bg-violet-500 text-white'
-                    : 'bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed'
+                  'flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs border',
+                  warning === 'not_found'
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                 )}
               >
-                <RefreshCw className="w-4 h-4" />
-                Generate UTM
-              </button>
-            </div>
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>
+                  <strong>[{groupName}]</strong>:{' '}
+                  {warning === 'not_found'
+                    ? t('Group not found in Settings')
+                    : t('Group has no country codes')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
-            {/* Generated output */}
-            {generated && (
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-fade-in">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-[var(--foreground)]">Generated UTM</h3>
-                  {isDuplicate === true && (
-                    <span className="flex items-center gap-1.5 text-xs text-amber-400">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      Already registered
-                    </span>
-                  )}
-                  {isDuplicate === false && (
-                    <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      Available
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 p-3 bg-violet-500/10 border border-violet-500/20 rounded-lg">
-                  <code className="flex-1 font-mono text-sm text-violet-300 break-all">{generated}</code>
-                  <button
-                    onClick={handleCopy}
-                    className="flex-shrink-0 w-8 h-8 rounded-lg hover:bg-violet-500/20 flex items-center justify-center text-violet-400 transition-colors"
-                  >
-                    {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                {isDuplicate === false && (
-                  <button
-                    onClick={handleSave}
-                    className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Save to Campaigns
-                  </button>
+        {/* ── Parsed Campaigns ──────────────────────────── */}
+        {parsed.length > 0 && (
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <button
+              onClick={() => setShowParsed(v => !v)}
+              className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-[var(--muted)] transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-[var(--foreground)]">
+                  {t('Parsed Campaigns')}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400 font-medium">
+                  {validParsed.length} {t('lines detected')}
+                </span>
+                {errorParsed.length > 0 && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 font-medium">
+                    {errorParsed.length} erro{errorParsed.length > 1 ? 's' : ''}
+                  </span>
                 )}
+              </div>
+              {showParsed ? <ChevronUp className="w-4 h-4 text-[var(--muted-foreground)]" /> : <ChevronDown className="w-4 h-4 text-[var(--muted-foreground)]" />}
+            </button>
+
+            {showParsed && (
+              <div className="overflow-x-auto border-t border-[var(--border)]">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-[var(--muted)] text-[var(--muted-foreground)]">
+                      <th className="px-4 py-2.5 text-left font-medium">{t('Cartaz')}</th>
+                      <th className="px-4 py-2.5 text-left font-medium">{t('Group')}</th>
+                      <th className="px-4 py-2.5 text-left font-medium">{t('Parameter')}</th>
+                      <th className="px-4 py-2.5 text-left font-medium">{t('Platform')}</th>
+                      <th className="px-4 py-2.5 text-left font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {parsed.map((p, i) => {
+                      if (p.error) {
+                        return (
+                          <tr key={i} className="bg-red-500/5">
+                            <td colSpan={5} className="px-4 py-2.5 text-red-400 font-mono">
+                              ⚠ {p.rawLine}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const group = getGroupByName(p.groupName);
+                      const hasGroup = !!group;
+                      const hasCodes = group && group.codes.length > 0;
+                      return (
+                        <tr key={i} className="hover:bg-[var(--muted)]/50 transition-colors">
+                          <td className="px-4 py-2.5 font-medium text-[var(--foreground)]">#{p.cartaz}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn(
+                              'px-2 py-0.5 rounded font-mono font-medium',
+                              hasCodes
+                                ? 'bg-violet-500/15 text-violet-400'
+                                : hasGroup
+                                ? 'bg-amber-500/15 text-amber-400'
+                                : 'bg-red-500/15 text-red-400'
+                            )}>
+                              {p.groupName}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-[var(--foreground)]">{p.parameter}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono font-medium">
+                              {p.platform}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {hasCodes ? (
+                              <span className="text-emerald-400">
+                                ✓ {group!.codes.length} {t('Country')}
+                              </span>
+                            ) : hasGroup ? (
+                              <span className="text-amber-400">⚠ {t('Group has no country codes')}</span>
+                            ) : (
+                              <span className="text-red-400">✗ {t('Group not found in Settings')}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
+        )}
 
-          {/* Right panel */}
-          <div className="lg:col-span-2 space-y-5">
+        {/* ── Generated UTMs ────────────────────────────── */}
+        {generated.length > 0 && (
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+            {/* Header bar */}
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)]">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-[var(--foreground)]">
+                  {t('Generated UTMs')}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-medium">
+                  {generated.length} {t('UTMs generated')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyAll}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                    copiedAll
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                      : 'border-[var(--border)] hover:bg-[var(--muted)] text-[var(--foreground)]'
+                  )}
+                >
+                  {copiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedAll ? t('Copied!') : t('Copy All')}
+                </button>
+                <button
+                  onClick={() => exportUTMsToCSV(generated)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] hover:bg-[var(--muted)] text-[var(--foreground)] transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {t('Export CSV')}
+                </button>
+                <button
+                  onClick={() => setGenerated([])}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 text-[var(--muted-foreground)] transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {t('Clear')}
+                </button>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-[var(--muted)] text-[var(--muted-foreground)]">
+                    <th className="px-4 py-2.5 text-left font-medium">{t('Cartaz')}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t('Country')}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t('Parameter')}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t('Platform')}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t('UTM')}</th>
+                    <th className="px-4 py-2.5 text-left font-medium">{t('Actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {generated.map((u, i) => (
+                    <tr key={i} className="hover:bg-[var(--muted)]/50 transition-colors group">
+                      <td className="px-4 py-2.5 font-medium text-[var(--foreground)]">#{u.cartaz}</td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-mono font-medium text-violet-400">{u.countryCode}</span>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[var(--foreground)]">{u.parameter}</td>
+                      <td className="px-4 py-2.5">
+                        <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono font-medium">
+                          {u.platform}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <code className="font-mono text-violet-300 bg-violet-500/10 px-2 py-0.5 rounded select-all">
+                          {u.utm}
+                        </code>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <button
+                          onClick={() => handleCopyUTM(u.utm, i)}
+                          className={cn(
+                            'flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all',
+                            copiedIndex === i
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : 'bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                          )}
+                          title={t('Copy')}
+                        >
+                          {copiedIndex === i ? (
+                            <><Check className="w-3 h-3" /> {t('Copied!')}</>
+                          ) : (
+                            <><Copy className="w-3 h-3" /> {t('Copy')}</>
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Empty states ──────────────────────────────── */}
+        {parsed.length === 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* How it works */}
             <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
               <h3 className="text-sm font-semibold text-[var(--foreground)] mb-3 flex items-center gap-2">
                 <Info className="w-4 h-4 text-blue-400" />
-                How It Works
+                {t('How It Works')}
               </h3>
               <div className="space-y-3 text-xs text-[var(--muted-foreground)]">
-                <div className="flex gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-[10px] font-bold">1</span>
-                  <p>Select your <strong className="text-[var(--foreground)]">niche</strong> (Finance, Crypto, etc.)</p>
-                </div>
-                <div className="flex gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-[10px] font-bold">2</span>
-                  <p>Choose the <strong className="text-[var(--foreground)]">country</strong> for targeting</p>
-                </div>
-                <div className="flex gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-[10px] font-bold">3</span>
-                  <p>Enter a <strong className="text-[var(--foreground)]">button/placement code</strong></p>
-                </div>
-                <div className="flex gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-[10px] font-bold">4</span>
-                  <p>The system generates a unique UTM and checks for duplicates</p>
-                </div>
-              </div>
-
-              <div className="mt-4 p-3 bg-[var(--muted)] rounded-lg">
-                <p className="text-[10px] text-[var(--muted-foreground)] font-medium mb-1">Example</p>
-                <p className="text-xs text-[var(--foreground)]">Niche: Finance → <code className="text-violet-400">FIN</code></p>
-                <p className="text-xs text-[var(--foreground)]">Country: Brazil → <code className="text-violet-400">BR</code></p>
-                <p className="text-xs text-[var(--foreground)]">Button: BTN → <code className="text-violet-400">BTN</code></p>
-                <p className="text-xs text-violet-400 mt-1 font-mono">utmsourceXBRFINBTN</p>
+                {[
+                  'Cole o texto das campanhas na área acima.',
+                  'Clique em "Extrair Campanhas" para detectar grupos e parâmetros.',
+                  'Clique em "Gerar UTMs" para criar os códigos por país.',
+                  'Copie individualmente ou exporte todos como CSV.',
+                ].map((step, i) => (
+                  <div key={i} className="flex gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-[10px] font-bold">
+                      {i + 1}
+                    </span>
+                    <p>{step}</p>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* History */}
-            {history.length > 0 && (
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-fade-in">
-                <h3 className="text-sm font-semibold text-[var(--foreground)] mb-3">Recent Generations</h3>
-                <div className="space-y-1.5">
-                  {history.map((utm, i) => {
-                    const isDup = checkDuplicate(utm);
-                    return (
-                      <div key={i} className="flex items-center gap-2 group">
-                        <code className="flex-1 text-[11px] font-mono text-[var(--muted-foreground)] truncate">
-                          {utm}
-                        </code>
-                        <span className={cn('flex-shrink-0 w-1.5 h-1.5 rounded-full', isDup ? 'bg-red-400' : 'bg-emerald-400')} />
-                        <button
-                          onClick={() => copyToClipboard(utm)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <Copy className="w-3 h-3 text-[var(--muted-foreground)]" />
-                        </button>
-                      </div>
-                    );
-                  })}
+            {/* Format example */}
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-[var(--foreground)] mb-3 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-400" />
+                {t('Example input')}
+              </h3>
+              <pre className="text-xs font-mono bg-[var(--muted)] rounded-lg p-3 text-[var(--muted-foreground)] leading-relaxed overflow-x-auto whitespace-pre-wrap">
+{`Cartaz 4 [ARABE-MUNDO] ESTÁ ATRELADO AO ARM-Namoro2-FB
+Cartaz 5 [ARABE-EUROPA] ESTÁ ATRELADO AO AREU-Finance2-FB`}
+              </pre>
+              <div className="mt-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+                <p className="text-[10px] text-emerald-400 font-medium mb-1.5">Saída gerada:</p>
+                <div className="space-y-1 font-mono text-xs text-[var(--foreground)]">
+                  {['ARM-Namoro2-FB', 'AREU-Namoro2-FB', 'ARIS-Namoro2-FB', 'ARKU-Namoro2-FB', 'AROM-Namoro2-FB'].map(utm => (
+                    <div key={utm} className="text-violet-400">{utm}</div>
+                  ))}
                 </div>
-                <p className="text-[10px] text-[var(--muted-foreground)] mt-3">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Available
-                  </span>
-                  {' · '}
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-400" /> Registered
-                  </span>
-                </p>
               </div>
-            )}
-          </div>
-        </div>
-      </div>
 
-      <AddCampaignModal
-        open={showAddModal}
-        onClose={() => { setShowAddModal(false); setPrefillCampaign(null); }}
-        editCampaign={prefillCampaign}
-      />
+              <div className="mt-3">
+                <p className="text-[10px] text-[var(--muted-foreground)] font-medium mb-1">
+                  Plataformas suportadas:
+                </p>
+                <div className="flex gap-1.5 flex-wrap">
+                  {['FB', 'TT', 'GG', 'Native'].map(p => (
+                    <span key={p} className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono text-xs font-medium">
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Groups count */}
+              <div className="mt-3 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                <span className="w-2 h-2 rounded-full bg-violet-400" />
+                {groups.length} grupos configurados nas{' '}
+                <a href="/settings" className="text-violet-400 hover:underline">Configurações</a>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
     </AppShell>
   );
 }
