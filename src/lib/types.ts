@@ -49,6 +49,8 @@ export interface Campaign {
   platform: Platform;
   status: Status;
   created_at: string;
+  /** True when this record was derived from a UTMEntry (Generator). Read-only in Campaign UI. */
+  _fromEntry?: boolean;
 }
 
 export interface CampaignFilters {

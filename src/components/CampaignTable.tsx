@@ -160,13 +160,17 @@ export function CampaignTable() {
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
                         <div className="absolute right-0 top-8 z-20 w-44 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl py-1 animate-scale-in">
-                          <button
-                            onClick={() => { setEditCampaign(campaign); setOpenMenu(null); }}
-                            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-                          >
-                            <Edit className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
-                            Edit Campaign
-                          </button>
+                          {!campaign._fromEntry && (
+                            <>
+                              <button
+                                onClick={() => { setEditCampaign(campaign); setOpenMenu(null); }}
+                                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                              >
+                                <Edit className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
+                                Edit Campaign
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => { handleCopy(campaign.id, campaign.utm_parameter); setOpenMenu(null); }}
                             className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
@@ -174,13 +178,15 @@ export function CampaignTable() {
                             <Copy className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
                             Copy UTM
                           </button>
-                          <button
-                            onClick={() => { duplicateCampaign(campaign.id); setOpenMenu(null); }}
-                            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-                          >
-                            <CopyPlus className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
-                            Duplicate
-                          </button>
+                          {!campaign._fromEntry && (
+                            <button
+                              onClick={() => { duplicateCampaign(campaign.id); setOpenMenu(null); }}
+                              className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                            >
+                              <CopyPlus className="w-3.5 h-3.5 text-[var(--muted-foreground)]" />
+                              Duplicate
+                            </button>
+                          )}
                           <div className="border-t border-[var(--border)] my-1" />
                           <button
                             onClick={() => handleDelete(campaign.id)}

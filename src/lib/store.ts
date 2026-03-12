@@ -3,102 +3,16 @@
 import { Campaign, CampaignFilters, SortConfig } from './types';
 import { generateId } from './utils';
 
-const STORAGE_KEY = 'utm_hub_campaigns';
-
-const SAMPLE_CAMPAIGNS: Campaign[] = [
-  {
-    id: generateId(),
-    campaign_name: 'Finance Brazil Q1',
-    niche: 'Finance',
-    country: 'Brazil',
-    utm_parameter: 'utmsourceXBRFINBTN',
-    platform: 'Meta Ads',
-    status: 'Active',
-    created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Crypto USA Launch',
-    niche: 'Crypto',
-    country: 'USA',
-    utm_parameter: 'utmsourceXUSACRYBTN',
-    platform: 'Google Adsense',
-    status: 'Testing',
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Fitness UK Campaign',
-    niche: 'Fitness',
-    country: 'United Kingdom',
-    utm_parameter: 'utmsourceXUKFITBTN',
-    platform: 'Meta Ads',
-    status: 'Active',
-    created_at: new Date(Date.now() - 86400000 * 14).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Health Supplements Brazil',
-    niche: 'Health',
-    country: 'Brazil',
-    utm_parameter: 'utmsourceXBRHEALTH',
-    platform: 'Both',
-    status: 'Paused',
-    created_at: new Date(Date.now() - 86400000 * 21).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Software Canada Push',
-    niche: 'Software',
-    country: 'Canada',
-    utm_parameter: 'utmsourceXCASOFTBTN',
-    platform: 'Google Adsense',
-    status: 'Active',
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'E-commerce Mexico',
-    niche: 'E-commerce',
-    country: 'Mexico',
-    utm_parameter: 'utmsourceXMXECOMBTN',
-    platform: 'Meta Ads',
-    status: 'Testing',
-    created_at: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Real Estate Australia',
-    niche: 'Real Estate',
-    country: 'Australia',
-    utm_parameter: 'utmsourceXAURESBTN',
-    platform: 'Both',
-    status: 'Active',
-    created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
-  },
-  {
-    id: generateId(),
-    campaign_name: 'Crypto Brazil Test',
-    niche: 'Crypto',
-    country: 'Brazil',
-    utm_parameter: 'utmsourceXBRCRYPTO',
-    platform: 'Meta Ads',
-    status: 'Testing',
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-];
+// v2 key intentionally discards any legacy sample/demo data stored under the old key
+const STORAGE_KEY = 'utm_hub_campaigns_v2';
 
 export function getCampaigns(): Campaign[] {
   if (typeof window === 'undefined') return [];
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(SAMPLE_CAMPAIGNS));
-      return SAMPLE_CAMPAIGNS;
-    }
-    return JSON.parse(stored);
+    return stored ? (JSON.parse(stored) as Campaign[]) : [];
   } catch {
-    return SAMPLE_CAMPAIGNS;
+    return [];
   }
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Campaign, CampaignFilters, SortConfig } from '@/lib/types';
+import { Campaign, CampaignFilters, SortConfig, Platform } from '@/lib/types';
 import {
   getCampaigns,
   addCampaign as addLocal,
@@ -12,6 +12,35 @@ import {
   filterCampaigns,
   sortCampaigns,
 } from '@/lib/store';
+import { getEntries, deleteEntry } from '@/lib/utmEntries';
+import { UTMEntry } from '@/lib/types';
+
+const PLATFORM_MAP: Record<string, Platform> = {
+  FB: 'Meta Ads',
+  TT: 'Meta Ads',
+  GG: 'Google Adsense',
+  NATIVE: 'Both',
+};
+
+function entryToCampaign(entry: UTMEntry): Campaign {
+  return {
+    id: `entry_${entry.id}`,
+    campaign_name: entry.utm,
+    niche: entry.parameter,
+    country: entry.countryName,
+    utm_parameter: entry.utm,
+    platform: PLATFORM_MAP[entry.platform.toUpperCase()] ?? 'Both',
+    status: entry.active ? 'Active' : 'Paused',
+    created_at: entry.createdAt,
+    _fromEntry: true,
+  };
+}
+
+function getAllCampaigns(): Campaign[] {
+  const campaigns = getCampaigns();
+  const entries = getEntries().map(entryToCampaign);
+  return [...campaigns, ...entries];
+}
 
 interface CampaignContextValue {
   campaigns: Campaign[];
@@ -51,8 +80,7 @@ export function CampaignProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(() => {
-    const data = getCampaigns();
-    setCampaigns(data);
+    setCampaigns(getAllCampaigns());
     setIsLoading(false);
   }, []);
 
@@ -67,23 +95,30 @@ export function CampaignProvider({ children }: { children: React.ReactNode }) {
 
   const addCampaign = useCallback((campaign: Omit<Campaign, 'id' | 'created_at'>) => {
     const newCampaign = addLocal(campaign);
-    setCampaigns(getCampaigns());
+    setCampaigns(getAllCampaigns());
     return newCampaign;
   }, []);
 
   const updateCampaign = useCallback((id: string, updates: Partial<Campaign>) => {
-    updateLocal(id, updates);
-    setCampaigns(getCampaigns());
+    if (!id.startsWith('entry_')) {
+      updateLocal(id, updates);
+    }
+    setCampaigns(getAllCampaigns());
   }, []);
 
   const deleteCampaign = useCallback((id: string) => {
-    deleteLocal(id);
-    setCampaigns(getCampaigns());
+    if (id.startsWith('entry_')) {
+      deleteEntry(id.replace('entry_', ''));
+    } else {
+      deleteLocal(id);
+    }
+    setCampaigns(getAllCampaigns());
   }, []);
 
   const duplicateCampaign = useCallback((id: string) => {
+    if (id.startsWith('entry_')) return null;
     const dup = duplicateLocal(id);
-    setCampaigns(getCampaigns());
+    setCampaigns(getAllCampaigns());
     return dup;
   }, []);
 
